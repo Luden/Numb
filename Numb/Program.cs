@@ -23,9 +23,13 @@ namespace Numb
         const string TargetName = "Spotify";
         const string TargetMuteHeaderName = "Spotify";
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
         private NotifyIcon trayIcon;
         private BackgroundWorker _worker;
         bool _isMuted;
+        bool _doNotMute;
 
         public MyCustomApplicationContext()
         {
@@ -38,10 +42,17 @@ namespace Numb
                 Visible = true
             };
 
+            trayIcon.Click += TrayIcon_Click;
+
             _worker = new BackgroundWorker();
             _worker.WorkerSupportsCancellation = true;
             _worker.DoWork += Main;
             _worker.RunWorkerAsync();
+        }
+
+        private void TrayIcon_Click(object sender, EventArgs e)
+        {
+            _doNotMute = false;
         }
 
         void Exit(object sender, EventArgs e)
@@ -78,12 +89,17 @@ namespace Numb
                     SetMuted(process.Id, false, true);
                 }
 
+                if (GetForegroundWindow() == process.MainWindowHandle)
+                    _doNotMute = true;
+
                 if (process.MainWindowTitle == TargetMuteHeaderName)
                 {
-                    SetMuted(process.Id, true);
+                    SetMuted(process.Id, !_doNotMute);
                 }
                 else
                 {
+                    if (_doNotMute)
+                        _doNotMute = false;
                     SetMuted(process.Id, false);
                 }
 

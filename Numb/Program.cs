@@ -21,7 +21,7 @@ namespace Numb
     public class MyCustomApplicationContext : ApplicationContext
     {
         const string TargetName = "Spotify";
-        string[] TargetMuteHeaderNames = new string[]{ "Spotify", "Pop Extra", "Advertisement" };
+        string[] TargetMuteHeaderNames = new string[]{ "Spotify", "Pop Extra", "Advertisement", "—" };
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
@@ -100,6 +100,8 @@ namespace Numb
                 {
                     if (_doNotMute)
                         _doNotMute = false;
+                    if (_isMuted)
+                        Thread.Sleep(1000);
                     SetMuted(process.Id, false);
                 }
 

@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
@@ -8,61 +10,93 @@ using Numb.Properties;
 
 namespace Numb
 {
-    static class Program
+    internal static class Program
     {
         [STAThread]
-        static void Main()
+        public static void Main()
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MyCustomApplicationContext());
+            Application.Run(new NumbApplicationContext());
         }
     }
-    public class MyCustomApplicationContext : ApplicationContext
+
+    public class NumbApplicationContext : ApplicationContext
     {
-        const string TargetName = "Spotify";
-        string[] TargetMuteHeaderNames = new string[]{ "Spotify", "Pop Extra", "Advertisement", "—" };
+        private readonly NotifyIcon _trayIcon;
+        private readonly BackgroundWorker _worker;
 
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        public static extern IntPtr GetForegroundWindow();
+        private List<string> _headers;
+        private bool _isMuted;
 
-        private NotifyIcon trayIcon;
-        private BackgroundWorker _worker;
-        bool _isMuted;
-        bool _doNotMute;
+        private const string _processName = "Spotify";
+        private const string _configFileName = "Numb.cfg";
 
-        public MyCustomApplicationContext()
+        public NumbApplicationContext()
         {
-            trayIcon = new NotifyIcon()
+            LoadConfig();
+            _trayIcon = new NotifyIcon()
             {
                 Icon = Resources.IdleIcon,
-                ContextMenu = new ContextMenu(new MenuItem[] {
-                new MenuItem("Exit", Exit)
-            }),
+                ContextMenu = new ContextMenu(new [] {
+                    new MenuItem("Add", OnAddClick),
+                    new MenuItem("Exit", OnExitClick),
+                }),
                 Visible = true
             };
-
-            trayIcon.Click += TrayIcon_Click;
-
             _worker = new BackgroundWorker();
             _worker.WorkerSupportsCancellation = true;
             _worker.DoWork += Main;
             _worker.RunWorkerAsync();
         }
 
-        private void TrayIcon_Click(object sender, EventArgs e)
+        private void LoadConfig()
         {
-            _doNotMute = false;
+            if (File.Exists(_configFileName))
+            {
+                _headers = File.ReadAllLines(_configFileName).ToList();
+            }
+            if (_headers == null || _headers.Count == 0)
+            {
+                _headers = new List<string> { "Spotify", "Pop Extra", "Advertisement" };
+                SaveConfig();
+            }
         }
 
-        void Exit(object sender, EventArgs e)
+        private void SaveConfig()
         {
-            trayIcon.Visible = false;
+            File.WriteAllLines(_configFileName, _headers.ToArray());
+        }
+
+        private void OnAddClick(object sender, EventArgs e)
+        {
+            var process = FindTargetProcess();
+            if (process == null)
+                return;
+            var title = process.MainWindowTitle;
+            if (_headers.Contains(title))
+                return;
+            _headers.Add(title);
+            SaveConfig();
+        }
+
+        private void OnExitClick(object sender, EventArgs e)
+        {
+            _trayIcon.Visible = false;
             _worker.CancelAsync();
+            var process = FindTargetProcess();
+            if (process != null)
+                SetMuted(process.Id, false);
             Application.Exit();
         }
 
-        void Main(object sender, System.ComponentModel.DoWorkEventArgs e)
+        private static Process FindTargetProcess()
+        {
+            var processes = Process.GetProcessesByName(_processName);
+            return processes.FirstOrDefault(x => !string.IsNullOrEmpty(x.MainWindowTitle));
+        }
+
+        private void Main(object sender, DoWorkEventArgs e)
         {
             Process process = null;
             while (true)
@@ -70,53 +104,35 @@ namespace Numb
                 if (_worker.CancellationPending)
                     return;
 
-                if (process != null)
-                    process.Refresh();
-
+                process?.Refresh();
                 if (process != null && process.HasExited)
                     process = null;
 
                 if (process == null)
                 {
-                    var processes = Process.GetProcessesByName(TargetName);
-                    process = processes.FirstOrDefault(x => !string.IsNullOrEmpty(x.MainWindowTitle));
+                    process = FindTargetProcess();
                     if (process == null)
                     {
-                        trayIcon.Icon = Resources.IdleIcon;
+                        _trayIcon.Icon = Resources.IdleIcon;
                         Thread.Sleep(10000);
                         continue;
                     }
-                    SetMuted(process.Id, false, true);
-                }
-
-                if (GetForegroundWindow() == process.MainWindowHandle)
-                    _doNotMute = true;
-
-                if (TargetMuteHeaderNames.Contains(process.MainWindowTitle))
-                {
-                    SetMuted(process.Id, !_doNotMute);
-                }
-                else
-                {
-                    if (_doNotMute)
-                        _doNotMute = false;
-                    if (_isMuted)
-                        Thread.Sleep(1000);
                     SetMuted(process.Id, false);
                 }
+
+                var shouldMute = _headers.Contains(process.MainWindowTitle);
+                if (shouldMute != _isMuted)
+                    SetMuted(process.Id, shouldMute);
 
                 Thread.Sleep(1000);
             }
         }
 
-        void SetMuted(int pid, bool muted, bool force = false)
+        private void SetMuted(int pid, bool muted)
         {
-            if (muted == _isMuted && !force)
-                return;
-
             _isMuted = muted;
             MixerController.SetApplicationMute(pid, muted);
-            trayIcon.Icon = muted ? Resources.BlockIcon : Resources.StandByIcon;
+            _trayIcon.Icon = muted ? Resources.BlockIcon : Resources.StandByIcon;
         }
     }
 }
